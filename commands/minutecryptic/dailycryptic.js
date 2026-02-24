@@ -116,7 +116,11 @@ function setupAnswerCollector(gameState) {
         gameState.buttonCollector.stop()
         m.react('🥳')
         m.react('😝')
-        m.reply({ embeds: [genAnswerEmbed(answer)] })
+
+        const hintsUsed = gameState.obtainedHints.size + gameState.lettersRevealed.size
+        const par = gameState.dailyCryptic.parDetails.averagePar
+        m.reply({ embeds: [genAnswerEmbed(answer, hintsUsed, par)] })
+        m.channel.send(gameState.dailyCryptic.explainerVideo)
     })
 }
 

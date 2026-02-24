@@ -16,12 +16,26 @@ function genClueEmbed(clue, answerLength, setterName) {
     return clueEmbed;
 }
 
-function genAnswerEmbed(answer) {
+function genParStr(hintsUsed, par) {
+    if(hintsUsed == par) {
+        return "even par"
+    }
+    else if(hintsUsed < par) {
+        return `${par - hintsUsed} under par`
+    }
+    else {
+        return `${hintsUsed - par} over par`
+    }
+}
+
+function genAnswerEmbed(answer, hintsUsed, par) {
+    const parString = genParStr(hintsUsed, par)
+
     const answerEmbed = new EmbedBuilder()
         .setColor('Gold')
         .setTitle(`${answer}`)
         .addFields(
-            { name: "You got it!", value: "x under par" }
+            { name: "You got it!", value: parString }
         )
 
     return answerEmbed;
