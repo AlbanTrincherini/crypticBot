@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, ComponentType } = require('discord.js')
-const { genClueEmbed, genAnswerEmbed, genHintEmbed, genHintButtons, genParEmbed } = require('../../ui/dailycrypticui.js')
+const { genClueEmbed, genAnswerEmbed, genHintEmbed, genHintButtons, genParEmbed, genLettersEmbed, LETTER_ID } = require('../../ui/dailycrypticui.js')
 
 module.exports = {
 	data: new SlashCommandBuilder().setName('dailycryptic').setDescription("Replies with today's cryptic!"),
@@ -10,7 +10,7 @@ module.exports = {
         
         const clue = gameState.dailyCryptic.clue.map(w => w.text).join(" ")
         const answer = gameState.dailyCryptic.answer
-        const answerLength = answer.length
+        const answerLength = answer.split(" ").map(a => a.length).join(",")
         const setterName = gameState.dailyCryptic.setterName
 
         const clueEmbed = genClueEmbed(clue, answerLength, setterName) 
@@ -18,7 +18,7 @@ module.exports = {
 
         await interaction.reply({
             components: [hintButtons],
-            embeds: [clueEmbed, getParEmbed(gameState)],
+            embeds: [clueEmbed, getParEmbed(gameState), getLettersEmbed(gameState)],
         })
 
         gameState.clueMessage = await interaction.fetchReply()
@@ -36,17 +36,21 @@ async function getDailyCryptic() {
 }
 
 function getParEmbed(gameState) {
-    const hintsUsed = gameState.obtainedHints.size
-    const totalHints = gameState.dailyCryptic.hints.length
+    const hintsUsed = gameState.obtainedHints.size + gameState.lettersRevealed.size
+    const totalHints = gameState.dailyCryptic.hints.length + gameState.dailyCryptic.letterRevealOrder.length
     const par = gameState.dailyCryptic.parDetails.averagePar
 
     return genParEmbed(hintsUsed, totalHints, par)
 }
 
+function getLettersEmbed(gameState) {
+    return genLettersEmbed(gameState.dailyCryptic.answer, gameState.lettersRevealed)
+}
+
 const EMBED_ORDERING = Object.freeze({
     CLUE_EMBED: 0,
     PAR_EMBED: 1,
-    // LETTERS_EMBED: 2,
+    LETTERS_EMBED: 2,
 })
 
 function updateEmbed(oldEmbeds, updatePosition, newEmbed) {
@@ -61,21 +65,40 @@ function setupButtonCollector(gameState) {
     const interactionCollector = gameState.clueMessage.createMessageComponentCollector({ componentType: ComponentType.Button })
 
     interactionCollector.on('collect', async (i) => {
-        const hintType = i.customId
-        gameState.obtainedHints.add(hintType)
+        if(i.customId === LETTER_ID) {
+            const revealedLetterPosition = gameState.dailyCryptic
+                .letterRevealOrder[gameState.lettersRevealed.size]
 
-        const newButtons = genHintButtons(gameState.dailyCryptic.hints.map(h => h.type), gameState.obtainedHints)
-        const newPar = getParEmbed(gameState)
-        
-        await i.update({ 
-            components: [newButtons],
-            embeds: updateEmbed(i.message.embeds, EMBED_ORDERING.PAR_EMBED, newPar),
-        })
+            gameState.lettersRevealed.add(revealedLetterPosition)
 
-        gameState.clueMessage = await i.fetchReply()
-        
-        const hint = gameState.dailyCryptic.hints.find(hint => hint.type === hintType)
-        await i.followUp({ embeds: [genHintEmbed(hint.type, hint.text)] })
+            const newPar = getParEmbed(gameState)
+            const withPar = updateEmbed(i.message.embeds, EMBED_ORDERING.PAR_EMBED, newPar)
+            const newLetters = getLettersEmbed(gameState)
+            const withLetters = updateEmbed(withPar, EMBED_ORDERING.LETTERS_EMBED, newLetters)
+
+            await i.update({
+                embeds: withLetters,
+            })
+
+            gameState.clueMessage = await i.fetchReply()
+        }
+        else {
+            const hintType = i.customId
+            gameState.obtainedHints.add(hintType)
+    
+            const newButtons = genHintButtons(gameState.dailyCryptic.hints.map(h => h.type), gameState.obtainedHints)
+            const newPar = getParEmbed(gameState)
+            
+            await i.update({ 
+                components: [newButtons],
+                embeds: updateEmbed(i.message.embeds, EMBED_ORDERING.PAR_EMBED, newPar),
+            })
+    
+            gameState.clueMessage = await i.fetchReply()
+            
+            const hint = gameState.dailyCryptic.hints.find(hint => hint.type === hintType)
+            await i.followUp({ embeds: [genHintEmbed(hint.type, hint.text)] })
+        }
     })
 
 
@@ -104,5 +127,6 @@ function initialGameState() {
         buttonCollector: null,
         clueMessage: null,
         obtainedHints: new Set(),
+        lettersRevealed: new Set(),
     }
 }

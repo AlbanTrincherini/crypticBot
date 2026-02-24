@@ -1,9 +1,10 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, } = require('discord.js');
-module.exports = { genClueEmbed, genAnswerEmbed, genHintEmbed, genHintButtons, genParEmbed }
+
+const DEFAULT_COLOR = 'LuminousVividPink'
 
 function genClueEmbed(clue, answerLength, setterName) {
     const clueEmbed = new EmbedBuilder()
-        .setColor('Blue')
+        .setColor(DEFAULT_COLOR)
         .setTitle('Today\'s clue')
         .setURL('https://www.minutecryptic.com/')
         .addFields(
@@ -37,17 +38,25 @@ function genHintEmbed(type, text) {
     return hintEmbed
 }
 
+const LETTER_ID = 'letter'
 function genHintButtons(hintTypes, obtainedHints) {
     const hintButtons = hintTypes.map(hintType => {
             const hintButton = new ButtonBuilder()
                 .setCustomId(hintType)
-                .setLabel(hintType)
+                .setLabel(`show ${hintType}`)
                 .setDisabled(obtainedHints.has(hintType))
                 .setStyle(ButtonStyle.Primary)
             return hintButton;
         })
+
+    const lettersButton = new ButtonBuilder()
+        .setCustomId(LETTER_ID)
+        .setLabel("show letter")
+        .setStyle(ButtonStyle.Primary)
     
-    const row = new ActionRowBuilder().addComponents(hintButtons)
+    const row = new ActionRowBuilder()
+        .addComponents(hintButtons)
+        .addComponents([lettersButton])
 
     return row;
 }
@@ -73,8 +82,30 @@ function genParEmbed(hintsUsed, totalHints, par) {
         .join(" ")
 
     const parEmbed = new EmbedBuilder()
-        .setColor('Blue')
-        .setTitle(parEmojis)
+        .setColor(DEFAULT_COLOR)
+        .setDescription(parEmojis)
 
     return parEmbed
 }
+
+function genLettersEmbed(answer, lettersRevealed) {
+    const letters = Array.from({ length: answer.length }, (_, i) => i)
+        .map((i) => {
+            const answerLetter = answer.charAt(i)
+            if(answerLetter == " " || lettersRevealed.has(i)) {
+                return answerLetter
+            }
+            else {
+                return "_"
+            }
+        })
+        .join("")
+
+    const lettersEmbed = new EmbedBuilder()
+        .setColor(DEFAULT_COLOR)
+        .setTitle(`\`${letters}\``)
+
+    return lettersEmbed
+}
+
+module.exports = { genClueEmbed, genAnswerEmbed, genHintEmbed, genHintButtons, genParEmbed, genLettersEmbed, LETTER_ID }
