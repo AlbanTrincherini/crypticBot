@@ -5,7 +5,6 @@ module.exports = {
 	data: new SlashCommandBuilder().setName('dailycryptic').setDescription("Replies with today's cryptic!"),
 	async execute(interaction) {
         const gameState = initialGameState()
-        gameState.gameInteraction = interaction
         gameState.dailyCryptic = await getDailyCryptic()
         
         const clue = gameState.dailyCryptic.clue.map(w => w.text).join(" ")
@@ -109,7 +108,7 @@ function setupAnswerCollector(gameState) {
     const answer = gameState.dailyCryptic.answer
     const collectorFilter = (m) => (m.content.trim().toUpperCase() == answer)
 
-    const collector = gameState.gameInteraction.channel
+    const collector = gameState.clueMessage.channel
         .createMessageCollector({ filter: collectorFilter, max: 1 })
 
     collector.on('collect', (m) => {
@@ -126,7 +125,6 @@ function setupAnswerCollector(gameState) {
 
 function initialGameState() {
     return {
-        gameInteraction: null,
         dailyCryptic: null,
         buttonCollector: null,
         clueMessage: null,
