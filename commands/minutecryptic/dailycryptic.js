@@ -1,29 +1,36 @@
-const { SlashCommandBuilder, ComponentType } = require('discord.js')
+const { SlashCommandBuilder, ComponentType, MessageFlags } = require('discord.js')
 const { genClueEmbed, genAnswerEmbed, genHintEmbed, genHintButtons, genParEmbed, genLettersEmbed, LETTER_ID } = require('../../ui/dailycrypticui.js')
+
+const runningGames = new Set()
 
 module.exports = {
 	data: new SlashCommandBuilder().setName('dailycryptic').setDescription("Replies with today's cryptic!"),
 	async execute(interaction) {
-        const gameState = initialGameState()
-        gameState.dailyCryptic = await getDailyCryptic()
-        
-        const clue = gameState.dailyCryptic.clue.map(w => w.text).join(" ")
-        const answer = gameState.dailyCryptic.answer
-        const answerLength = answer.split(" ").map(a => a.length).join(",")
-        const setterName = gameState.dailyCryptic.setterName
+        const channelId = interaction.channel.id
 
-        const clueEmbed = genClueEmbed(clue, answerLength, setterName) 
-        const hintButtons = genHintButtons(gameState.dailyCryptic.hints.map(h => h.type), gameState.obtainedHints)
+        if(runningGames.has(channelId)) {
+            interaction.reply({ content: 'There is already a game running in this channel...', flags: MessageFlags.Ephemeral })
+            return
+        }
 
-        await interaction.reply({
-            components: [hintButtons],
-            embeds: [clueEmbed, getParEmbed(gameState), getLettersEmbed(gameState)],
-        })
 
-        gameState.clueMessage = await interaction.fetchReply()
+        try {
+            const dailyCryptic = await getDailyCryptic()
+            const gameState = initialGameState(dailyCryptic, channelId)
+            runningGames.add(channelId)
 
-        setupButtonCollector(gameState)
-        setupAnswerCollector(gameState)
+            await interaction.reply({
+                components: [getHintButtons(gameState)],
+                embeds: [getClueEmbed(gameState), getParEmbed(gameState), getLettersEmbed(gameState)],
+            })
+
+            gameState.clueMessage = await interaction.fetchReply()
+
+            setupCollectors(gameState)
+        } catch (err) {
+            runningGames.delete(channelId) // Clean up on failure
+            interaction.reply("Couldn't start the game. Try again later.")
+        }
 	},
 }
 
@@ -46,6 +53,19 @@ function getLettersEmbed(gameState) {
     return genLettersEmbed(gameState.dailyCryptic.answer, gameState.lettersRevealed)
 }
 
+function getHintButtons(gameState) {
+    return genHintButtons(gameState.dailyCryptic.hints.map(h => h.type), gameState.obtainedHints)
+}
+
+function getClueEmbed(gameState) {
+    const clue = gameState.dailyCryptic.clue.map(w => w.text).join(" ")
+    const answer = gameState.dailyCryptic.answer
+    const answerLength = answer.split(" ").map(a => a.length).join(",")
+    const setterName = gameState.dailyCryptic.setterName
+
+    return genClueEmbed(clue, answerLength, setterName)
+}
+
 const EMBED_ORDERING = Object.freeze({
     CLUE_EMBED: 0,
     PAR_EMBED: 1,
@@ -60,10 +80,29 @@ function updateEmbed(oldEmbeds, updatePosition, newEmbed) {
         })
 }
 
-function setupButtonCollector(gameState) {
-    const interactionCollector = gameState.clueMessage.createMessageComponentCollector({ componentType: ComponentType.Button })
+function setupCollectors(gameState) {
+    const collectorLifetime = 1000 * 60 * 30 // 30 minutes
 
-    interactionCollector.on('collect', async (i) => {
+    const buttonCollector = gameState.clueMessage
+        .createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: collectorLifetime
+        })
+
+    const answer = gameState.dailyCryptic.answer
+    const answerFilter = (m) => (m.content.trim().toUpperCase() === answer)
+    const answerCollector = gameState.clueMessage.channel
+        .createMessageCollector({
+            filter: answerFilter,
+            max: 1,
+            time: collectorLifetime,
+        })
+
+    setupButtonCollector(gameState, buttonCollector)
+    setupAnswerCollector(gameState, answerCollector, buttonCollector)
+}
+function setupButtonCollector(gameState, buttonCollector) {
+    buttonCollector.on('collect', async (i) => {
         if(i.customId === LETTER_ID) {
             const revealedLetterPosition = gameState.dailyCryptic
                 .letterRevealOrder[gameState.lettersRevealed.size]
@@ -78,55 +117,47 @@ function setupButtonCollector(gameState) {
             await i.update({
                 embeds: withLetters,
             })
-
-            gameState.clueMessage = await i.fetchReply()
         }
         else {
             const hintType = i.customId
             gameState.obtainedHints.add(hintType)
-    
+
             const newButtons = genHintButtons(gameState.dailyCryptic.hints.map(h => h.type), gameState.obtainedHints)
             const newPar = getParEmbed(gameState)
-            
-            await i.update({ 
+
+            await i.update({
                 components: [newButtons],
                 embeds: updateEmbed(i.message.embeds, EMBED_ORDERING.PAR_EMBED, newPar),
             })
-    
-            gameState.clueMessage = await i.fetchReply()
-            
+
             const hint = gameState.dailyCryptic.hints.find(hint => hint.type === hintType)
             await i.followUp({ embeds: [genHintEmbed(hint.type, hint.text)] })
         }
     })
-
-
-    gameState.buttonCollector = interactionCollector
 }
 
-function setupAnswerCollector(gameState) {
-    const answer = gameState.dailyCryptic.answer
-    const collectorFilter = (m) => (m.content.trim().toUpperCase() == answer)
-
-    const collector = gameState.clueMessage.channel
-        .createMessageCollector({ filter: collectorFilter, max: 1 })
-
-    collector.on('collect', (m) => {
-        gameState.buttonCollector.stop()
+function setupAnswerCollector(gameState, answerCollector, buttonCollector) {
+    answerCollector.on('collect', (m) => {
         m.react('🥳')
         m.react('😝')
 
+        const answer = gameState.dailyCryptic.answer
         const hintsUsed = gameState.obtainedHints.size + gameState.lettersRevealed.size
         const par = gameState.dailyCryptic.parDetails.averagePar
         m.reply({ embeds: [genAnswerEmbed(answer, hintsUsed, par)] })
         m.channel.send(gameState.dailyCryptic.explainerVideo)
     })
+
+    answerCollector.on('end', (collected, reason) => {
+        buttonCollector.stop()
+        runningGames.delete(gameState.channelId)
+    })
 }
 
-function initialGameState() {
+function initialGameState(dailyCryptic, channelId) {
     return {
-        dailyCryptic: null,
-        buttonCollector: null,
+        dailyCryptic: dailyCryptic,
+        channelId: channelId,
         clueMessage: null,
         obtainedHints: new Set(),
         lettersRevealed: new Set(),
