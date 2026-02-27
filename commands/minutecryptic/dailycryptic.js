@@ -29,16 +29,47 @@ module.exports = {
             setupCollectors(gameState)
         } catch (err) {
             runningGames.delete(channelId) // Clean up on failure
-            interaction.reply("Couldn't start the game. Try again later.")
+            console.error('[dailycryptic] failed to start game:', err)
+            interaction.reply({ content: "Couldn't start the game (MinuteCryptic API error). Try again later.", flags: MessageFlags.Ephemeral })
         }
 	},
 }
 
 async function getDailyCryptic() {
-    const response = await fetch("https://www.minutecryptic.com/api/daily_puzzle/today?tz=Europe/Zurich")
-    const data = await response.json()
+    const url = "https://www.minutecryptic.com/api/daily_puzzle/today?tz=Europe/Zurich"
+    const timeoutMs = 10_000
 
-    return data
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), timeoutMs)
+
+    try {
+        const response = await fetch(url, {
+            signal: controller.signal,
+            headers: {
+                // Some CDNs behave differently without a UA; keep it simple.
+                'User-Agent': 'minutecryptic-discord-bot',
+                'Accept': 'application/json',
+            },
+        })
+
+        if (!response.ok) {
+            const body = await response.text().catch(() => '')
+            throw new Error(`MinuteCryptic API error: HTTP ${response.status} ${response.statusText} body=${body.slice(0, 300)}`)
+        }
+
+        const data = await response.json().catch((e) => {
+            throw new Error(`MinuteCryptic API JSON parse error: ${e?.message ?? e}`)
+        })
+
+        return data
+    } catch (err) {
+        if (err?.name === 'AbortError') {
+            throw new Error(`MinuteCryptic API request timed out after ${timeoutMs}ms`)
+        }
+        throw err
+    } finally {
+        clearTimeout(timeout)
+    }
 }
 
 function getParEmbed(gameState) {
